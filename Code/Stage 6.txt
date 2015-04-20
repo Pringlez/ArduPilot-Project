@@ -1,0 +1,170 @@
+/*
+
+Stage 6 of development, the quad-copter will attempt to stabilize when throttle is applied
+
+*/
+
+// The includes listed below, straight from the ArduPilot libraries
+#include <AP_Common.h>
+#include <AP_Math.h>
+#include <AP_InertialSensor.h>
+#include <AP_Param.h>
+#include <AP_ADC.h>
+#include <AP_Progmem.h>
+#include <AP_HAL.h>
+#include <AP_HAL_AVR.h>
+#include <PID.h>
+
+// Motors labelled, used to improve source readability  
+#define FRONT_RIGHT_MOTOR 0
+#define REAR_LEFT_MOTOR 1
+#define FRONT_LEFT_MOTOR 2
+#define REAR_RIGHT_MOTOR 3
+
+// PID rates labelled for pitch, roll and yaw
+#define PITCH_RATE 0
+#define ROLL_RATE 1
+#define PITCH_STAB 2
+#define ROLL_STAB 3
+#define YAW_RATE 4
+#define YAW_STAB 5
+
+// RC min / max values defined
+#define THROTTLE_MIN 1114
+#define YAW_MIN 1114
+#define YAW_MAX 1911
+#define PITCH_MIN 1114
+#define PITCH_MAX 1911
+#define ROLL_MIN 1114
+#define ROLL_MAX 1911
+
+// Defined max / min degrees of roll, pitch and yaw
+#define YAW_MIN_DEG -180
+#define YAW_MAX_DEG 180
+#define PITCH_ROLL_MIN_DEG -45
+#define PITCH_ROLL_MAX_DEG 45
+
+// Used for the yaw channel, prevents yaw drifting
+#define wrap_180(x) (x < -180 ? x+360 : (x > 180 ? x - 360: x))
+
+// Hal libraries defined for the APM2 board, provides layer of abstraction
+const AP_HAL::HAL& hal = AP_HAL_AVR_APM2;
+
+// MPU accel / gyro chip
+AP_InertialSensor_MPU6000 mpu;
+
+// Map function used to scale input min / max to specified min / max
+long map(long x, long in_min, long in_max, long out_min, long out_max)
+{
+  return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
+}
+
+PID pids[6];  // Stores PID vars
+
+// The setup function runs at power-up, escs, motors, mpu sensor, rates are initialized 
+void setup() 
+{
+  hal.rcout->set_freq(0xF, 490);  // Enable escs / motors
+  hal.rcout->enable_mask(0xFF);
+  
+  hal.gpio->pinMode(40, GPIO_OUTPUT);  // Disabling barometer, not compatable with mpu without baro driver (Not implemented)
+  hal.gpio->write(40, 1);
+
+  mpu.init(AP_InertialSensor::COLD_START, AP_InertialSensor::RATE_100HZ, NULL); // Initialize accel / gyro sensor - 100Hz refresh rate
+
+  hal.scheduler->suspend_timer_procs();  // Prevents collisions
+  mpu.dmp_init();	// Enabling dmp
+  mpu.push_gyro_offsets_to_dmp();  // Calibrate  
+  hal.scheduler->resume_timer_procs();  // Resume processing
+  
+  // Setting the pitch / roll and yaw rates
+  pids[PITCH_RATE].kP(0.7);
+  pids[PITCH_RATE].kI(1);
+  pids[PITCH_RATE].imax(50);
+
+  pids[ROLL_RATE].kP(0.7);
+  pids[ROLL_RATE].kI(1);
+  pids[ROLL_RATE].imax(50);
+
+  pids[YAW_RATE].kP(2.5);
+  pids[YAW_RATE].kI(1);
+  pids[YAW_RATE].imax(50);
+
+  pids[PITCH_STAB].kP(4.5);
+  pids[ROLL_STAB].kP(4.5);
+  pids[YAW_STAB].kP(10);
+}
+
+void loop()	// Main loop
+{
+  static float yaw_target = 0;
+  
+  while (mpu.num_samples_available() == 0);		// When new data available then continue below
+
+  uint16_t rc_channels[8];  // Create an array for the channels, 16 bit
+  
+  hal.rcin->read(rc_channels, 8);  // Reading RC channels
+  
+  uint16_t rc_input_roll, rc_input_pitch, rc_input_throttle, rc_input_yaw;   // Vars to store output from channels
+  
+  rc_input_roll = map(rc_channels[0], ROLL_MIN, ROLL_MAX, PITCH_ROLL_MIN_DEG, PITCH_ROLL_MAX_DEG);
+  rc_input_pitch = map(rc_channels[1], PITCH_MIN, PITCH_MAX, PITCH_ROLL_MIN_DEG, PITCH_ROLL_MAX_DEG);
+  rc_input_throttle = rc_channels[2];
+  rc_input_yaw = map(rc_channels[3], YAW_MIN, YAW_MAX, YAW_MIN_DEG, YAW_MAX_DEG);
+  
+  mpu.update();	 // Get data from mpu for orientation
+  
+  float mpu_curr_roll, mpu_curr_pitch, mpu_curr_yaw;
+  mpu.quaternion.to_euler(&mpu_curr_roll, &mpu_curr_pitch, &mpu_curr_yaw);
+  
+  // Convert values to degrees
+  mpu_curr_roll = ToDeg(mpu_curr_roll);
+  mpu_curr_pitch = ToDeg(mpu_curr_pitch);
+  mpu_curr_yaw = ToDeg(mpu_curr_yaw);
+  
+  // Ask MPU6050 for gyro data. then convert gyro values from mpu to usable float values in degrees
+  Vector3f gyro = mpu.get_gyro();
+  
+  // Convert gyro values from mpu to usable float values in degrees
+  float gyroPitch = ToDeg(gyro.y);
+  float gyroRoll = ToDeg(gyro.x);
+  float gyroYaw = ToDeg(gyro.z);
+  
+  // When the throttle is above the throttle min + 100
+  if(rc_input_throttle > THROTTLE_MIN + 100)
+  {
+	float stabilize_output_roll = constrain(pids[ROLL_STAB].get_pid((float)rc_input_roll - mpu_curr_roll, 1), -250, 250);
+    float stabilize_output_pitch = constrain(pids[PITCH_STAB].get_pid((float)rc_input_pitch - mpu_curr_pitch, 1), -250, 250);
+    float stabilize_output_yaw = constrain(pids[YAW_STAB].get_pid(wrap_180(yaw_target - mpu_curr_yaw), 1), -360, 360);
+	
+	// If pilot changes yaw, use input from yaw channel overwriting yaw calculations
+    if(abs(rc_input_yaw) > 5) {
+      stabilize_output_yaw = rc_input_yaw;
+      yaw_target = mpu_curr_yaw; // Store yaw as a point of reference
+    }
+	
+	long output_roll = (long) constrain(pids[ROLL_RATE].get_pid(stabilize_output_roll - gyroRoll, 1), -500, 500);
+    long output_pitch = (long) constrain(pids[PITCH_RATE].get_pid(stabilize_output_pitch - gyroPitch, 1), -500, 500);
+    long output_yaw = (long) constrain(pids[YAW_RATE].get_pid(stabilize_output_yaw - gyroYaw, 1), -500, 500);
+
+	// The individual motor outputs
+    hal.rcout->write(FRONT_LEFT_MOTOR, rc_input_throttle + output_roll + output_pitch - output_yaw);
+    hal.rcout->write(REAR_LEFT_MOTOR, rc_input_throttle + output_roll - output_pitch + output_yaw);
+    hal.rcout->write(FRONT_RIGHT_MOTOR, rc_input_throttle - output_roll + output_pitch + output_yaw);
+    hal.rcout->write(REAR_RIGHT_MOTOR, rc_input_throttle - output_roll - output_pitch - output_yaw);
+  } 
+  else	// If not then turn off motors and reset pids rates (When the quadcopter has landed)
+  {
+    hal.rcout->write(FRONT_LEFT_MOTOR, 1000);
+    hal.rcout->write(REAR_LEFT_MOTOR, 1000);
+    hal.rcout->write(FRONT_RIGHT_MOTOR, 1000);
+    hal.rcout->write(REAR_RIGHT_MOTOR, 1000);
+	
+    for(int i=0; i<6; i++)
+    {
+      pids[i].reset_I();
+    }
+  }
+}
+
+AP_HAL_MAIN();  // Calling the main loop

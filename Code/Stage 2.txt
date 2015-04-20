@@ -1,0 +1,53 @@
+/*
+
+Stage 2 of development, the quad-copter will output the roll, pitch and yaw values in degrees
+	
+	* The function map will convert the input value from a rc channel to a scaled value in degrees
+	* These values in degrees will used later in development when calculating the amount of roll, pitch
+	  and yaw the pilot requests the quad-copter to perform
+
+*/
+
+// The includes listed below, straight from the ArduPilot libraries
+#include <AP_Common.h>
+#include <AP_Math.h>
+#include <AP_InertialSensor.h>
+#include <AP_Param.h>
+#include <AP_ADC.h>
+#include <AP_Progmem.h>
+#include <AP_HAL.h>
+#include <AP_HAL_AVR.h>
+#include <PID.h>
+
+const AP_HAL::HAL& hal = AP_HAL_AVR_APM2;  // Specific HAL lib
+
+// Map function used to scale input min / max to specified min / max
+long map(long x, long in_min, long in_max, long out_min, long out_max)
+{
+  return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
+}
+
+void setup() 
+{
+}
+
+void loop() 
+{
+  uint16_t channels[8];  // Create an array for the channels, 16 bit
+  
+  // Reading RC channels
+  hal.rcin->read(channels, 8);
+  
+  uint16_t rc_input_roll, rc_input_pitch, rc_input_throttle, rc_input_yaw;   // Vars to store output from channels
+  
+  rc_input_roll = map(channels[0], 1114, 1911, -45, 45);
+  rc_input_pitch = map(channels[1], 1114, 1911, -45, 45);
+  rc_input_throttle = channels[2];
+  rc_input_yaw = map(channels[3], 1114, 1911, -150, 150);
+
+  hal.console->printf_P(PSTR("Result: ROLL %d PIT %d THR %d YAW %d \n"), rc_input_roll, rc_input_pitch, rc_input_throttle, rc_input_yaw);
+
+  hal.scheduler->delay(100);  // Delay 100ms
+}
+
+AP_HAL_MAIN();  // Keep calling main loop

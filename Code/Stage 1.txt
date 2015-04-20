@@ -1,0 +1,44 @@
+/*
+
+Stage 1 of development, the quad-copter will attempt to output values from the RC input
+
+*/
+
+// The includes listed below, straight from the ArduPilot libraries
+#include <AP_Common.h>
+#include <AP_Math.h>
+#include <AP_InertialSensor.h>
+#include <AP_Param.h>
+#include <AP_ADC.h>
+#include <AP_Progmem.h>
+#include <AP_HAL.h>
+#include <AP_HAL_AVR.h>
+#include <PID.h>
+
+const AP_HAL::HAL& hal = AP_HAL_AVR_APM2;  // Specific HAL lib
+
+void setup() 
+{
+}
+
+void loop() 
+{
+  uint16_t channels[8];  // Create an array for the channels, 16 bit
+  
+  // Reading RC channels
+  hal.rcin->read(channels, 8);
+  
+  uint16_t rc_input_roll, rc_input_pitch, rc_input_throttle, rc_input_yaw;   // Vars to store output from channels
+  
+  rc_input_roll = channels[0];
+  rc_input_pitch = channels[1];
+  rc_input_throttle = channels[2];  
+  rc_input_yaw = channels[3];
+  
+  // Display output from board to get min and max values
+  hal.console->printf_P(PSTR("Reading: ROLL %d PIT %d THR %d YAW %d \n"), rc_input_roll, rc_input_pitch, rc_input_throttle, rc_input_yaw);
+
+  hal.scheduler->delay(100);  // Delay 100ms
+}
+
+AP_HAL_MAIN();    // Keep calling main loop

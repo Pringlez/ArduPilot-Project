@@ -1,0 +1,61 @@
+/*
+
+Stage 3 of development, the quad-copter will attempt to apply input from the throttle rc channel to the motors
+
+	* The setup function is used to initialize the escs / motors, the loop function has been modified to take
+	  values from the throttle channel and write / pass them to the motors
+
+*/
+
+// The includes listed below, straight from the ArduPilot libraries
+#include <AP_Common.h>
+#include <AP_Math.h>
+#include <AP_InertialSensor.h>
+#include <AP_Param.h>
+#include <AP_ADC.h>
+#include <AP_Progmem.h>
+#include <AP_HAL.h>
+#include <AP_HAL_AVR.h>
+#include <PID.h>
+
+// Motors labelled, used to improve source readability  
+#define FRONT_RIGHT_MOTOR 0
+#define REAR_LEFT_MOTOR 1
+#define FRONT_LEFT_MOTOR 2
+#define REAR_RIGHT_MOTOR 3
+
+const AP_HAL::HAL& hal = AP_HAL_AVR_APM2;  // Specific HAL lib
+
+// Map function used to scale input min / max to specified min / max
+long map(long x, long in_min, long in_max, long out_min, long out_max)
+{
+  return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
+}
+
+void setup() 
+{
+  hal.rcout->set_freq(0xF, 490);
+  hal.rcout->enable_mask(0xFF);
+}
+
+void loop() 
+{
+  uint16_t channels[8];  // Create an array for the channels, 16 bit
+  
+  // Reading RC channels
+  hal.rcin->read(channels, 8);
+  
+  uint16_t rc_input_roll, rc_input_pitch, rc_input_throttle, rc_input_yaw;   // Vars to store output from channels
+  
+  rc_input_roll = map(channels[0], 1114, 1911, -45, 45);
+  rc_input_pitch = map(channels[1], 1114, 1911, -45, 45);
+  rc_input_throttle = channels[2];
+  rc_input_yaw = map(channels[3], 1114, 1911, -150, 150);
+  
+  hal.rcout->write(FRONT_LEFT_MOTOR, rc_input_throttle);
+  hal.rcout->write(FRONT_RIGHT_MOTOR, rc_input_throttle);
+  hal.rcout->write(REAR_LEFT_MOTOR, rc_input_throttle);
+  hal.rcout->write(REAR_RIGHT_MOTOR, rc_input_throttle);
+}
+
+AP_HAL_MAIN();  // Keep calling main loop
